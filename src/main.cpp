@@ -117,8 +117,8 @@ int main() {
         ThreadPool pool;
         PollManager* poll = new PollManager(&pool);
         int port{ 8080 };
-        int backlog{ 512 };
-        int clients_count{ 300 };
+        int backlog{ 4096 };
+        int clients_count{ 200 };
         int incoming{ 0 };
         int outgoing{ 0 };
 
@@ -135,11 +135,9 @@ int main() {
                 poll->ResetFlags(socket_id);
             });
 
-            cout_mtx.lock();
-            cout << "<Server> Listen socket [" << listen_socket << "] at port [" << (port) << "]\n";
-            cout_mtx.unlock();
             int sleep_time = 10;
             cout_mtx.lock();
+            cout << "<Server> Listen socket [" << listen_socket << "] at port [" << (port) << "]\n";
             cout << "Sleeping " << sleep_time << " sec and stop...\n";
             cout_mtx.unlock();
             std::this_thread::sleep_for(std::chrono::seconds(sleep_time));
