@@ -1,9 +1,13 @@
 #include <string>
 #include <iostream>
+#include <stdexcept>
 #include <pollmanager/manager/poll.hpp>
 
 using namespace std;
 using namespace vsock;
+
+
+static std::mutex cout_mtx;
 
 void InitWinsock() {
     //----------------------
@@ -29,6 +33,9 @@ SocketID Connect(int port) {
     SocketID ConnectSocket;
     ConnectSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (ConnectSocket == VSOCK_INVALID_SOCKET) {
+        #ifdef _WIN32
+        throw std::runtime_error(std::to_string(WSAGetLastError()));
+        #endif        
         return VSOCK_INVALID_SOCKET;
     }
     //----------------------
@@ -43,6 +50,9 @@ SocketID Connect(int port) {
     // Connect to server.
     int iResult = connect(ConnectSocket, (sockaddr*)&clientService, sizeof(clientService));
     if (iResult == VSOCK_SOCKET_ERROR) {
+        #ifdef _WIN32
+        throw std::runtime_error(std::to_string(WSAGetLastError()));
+        #endif                 
         return VSOCK_INVALID_SOCKET;
     }
     return ConnectSocket;
@@ -106,7 +116,6 @@ SocketID Listen(int port, int backlog) {
 }
 
 
-static std::mutex cout_mtx;
 
 int main() {
 
@@ -118,12 +127,12 @@ int main() {
         PollManager* poll = new PollManager(&pool);
         int port{ 8080 };
         int backlog{ 4096 };
-        int clients_count{ 200 };
+        int clients_count{ 300 };
         int incoming{ 0 };
         int outgoing{ 0 };
 
         pool.AddAsyncTask([&]() {
-            
+
             SocketID listen_socket = Listen(port, backlog);
 
             poll->Add(listen_socket, (EPOLLIN | EPOLLONESHOT), [&](const SocketID socket_id) {
@@ -154,17 +163,15 @@ int main() {
 
 
         for (int i = 0; i < clients_count; ++i) {
-            pool.AddAsyncTask([&, index = i]() {
-                SocketID client_socket_id = VSOCK_INVALID_SOCKET;
-                while (client_socket_id == VSOCK_INVALID_SOCKET) {
-                    client_socket_id = Connect(port);
-                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-                }
-                cout_mtx.lock();
-                ++outgoing;
-                cout << "<Client#" << index << "> Connected at port [" << std::to_string(port) << "], Socket ID: " << client_socket_id << std::endl;
-                cout_mtx.unlock();
-            });
+            SocketID client_socket_id = VSOCK_INVALID_SOCKET;
+            while (client_socket_id == VSOCK_INVALID_SOCKET) {
+                client_socket_id = Connect(port);
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            cout_mtx.lock();
+            ++outgoing;
+            cout << "<Client#" << i << "> Connected at port [" << std::to_string(port) << "], Socket ID: " << client_socket_id << std::endl;
+            cout_mtx.unlock();
         }
         cout << "Done!" << endl;
     }
