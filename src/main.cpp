@@ -164,7 +164,7 @@ int main() {
         });
 
 
-        for (int i = 0; i < 500; ++i) {
+        for (int i = 0; i < 200; ++i) {
 
             std::unique_ptr<Task> connect_task = std::make_unique<Task>();
             connect_task->vars.Add((SocketID)VSOCK_INVALID_SOCKET);
