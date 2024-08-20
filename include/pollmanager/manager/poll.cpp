@@ -295,6 +295,7 @@ namespace vsock {
                     "Message: ::epoll_ctl() failed"s
                 );
             }
+            closesocket(id);
         }
         queue_.clear();
     }

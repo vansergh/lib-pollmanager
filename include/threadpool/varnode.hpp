@@ -66,17 +66,17 @@ namespace vsock {
 
     template<typename T>
     VarNode::VarNode(T&& data) :
-        data_{ Put_(std::move(data)) }
+        data_{ Put_(std::forward<T>(data)) }
     {}
 
     template<typename T>
     inline void VarNode::Put(T&& data) {
-        data_ = Put_(std::move(data));
+        data_ = Put_(std::forward<T>(data));
     }
 
     template<typename T>
     inline T& VarNode::Emplace(T&& data) {
-        Put(std::move(data));
+        Put(std::forward<T>(data));
         return *(reinterpret_cast<T*>(data_));
     }
 
@@ -98,7 +98,7 @@ namespace vsock {
 
     template<typename T>
     inline void* VarNode::Put_(T&& data) {
-        void* result = reinterpret_cast<void*>(new T(std::move(data)));
+        void* result = reinterpret_cast<void*>(new T(std::forward<T>(data)));
         Drop();
         hash_code_ = typeid(T).hash_code();
         delete_fnc_ = VarNode::Delete_<T>;

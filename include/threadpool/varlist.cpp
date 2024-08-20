@@ -6,20 +6,6 @@ namespace vsock {
     // VarList class defenition
     ////////////////////////////////////////////////////////////////////////////////
 
-    VarList::VarList(VarList&& other) :
-        nodes_{ std::exchange(other.nodes_,nullptr) },
-        size_{ std::exchange(other.size_,0) },
-        capacity_{ std::exchange(other.capacity_,0) }
-    {}
-
-    VarList& VarList::operator=(VarList&& rhs) {
-        if (&rhs != this) {
-            auto old = VarList(std::move(rhs));
-            Swap_(old);
-        }
-        return *this;
-    }
-
     void VarList::Remove(std::size_t index) {
         if (index >= size_) {
             throw std::out_of_range("Out of range");
@@ -67,12 +53,6 @@ namespace vsock {
         capacity_ = future_capacity;
         nodes_.reset();
         nodes_ = std::move(new_nodes);
-    }
-
-    void VarList::Swap_(VarList& other) noexcept {
-        std::swap(nodes_, other.nodes_);
-        std::swap(size_, other.size_);
-        std::swap(capacity_, other.capacity_);
     }
 
 }

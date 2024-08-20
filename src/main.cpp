@@ -129,7 +129,7 @@ int main() {
         PollManager* poll = new PollManager(&pool);
         int port{ 8080 };
         int backlog{ 4096 };
-        int clients_count{ 150 };
+        int clients_count{ 2 };
         int incoming{ 0 };
         int outgoing{ 0 };
 
@@ -139,6 +139,18 @@ int main() {
 
             poll->Add(listen_socket, (EPOLLIN | EPOLLONESHOT), [&](const SocketID socket_id) {
                 SocketID client_id = ::accept(socket_id, 0, 0);
+                poll->Add(client_id, (EPOLLIN | EPOLLONESHOT), [&](const SocketID socket_id) {
+                    cout_mtx.lock();
+                    std::cout << "<ClientIN> Socket[" << socket_id << "]\n";
+                    cout_mtx.unlock();
+                    poll->ResetFlags(socket_id);
+                });
+                poll->Add(client_id, (EPOLLOUT | EPOLLONESHOT), [&](const SocketID socket_id) {
+                    cout_mtx.lock();
+                    std::cout << "<ClientOUT> Socket[" << socket_id << "]\n";
+                    cout_mtx.unlock();
+                    poll->ResetFlags(socket_id);
+                });
                 cout_mtx.lock();
                 ++incoming;
                 std::cout << "<Server> Client #" << incoming << " connected at Socket[" << client_id << "]\n";
@@ -146,7 +158,7 @@ int main() {
                 poll->ResetFlags(socket_id);
             });
 
-            int sleep_time = 1;
+            int sleep_time = 100;
             cout_mtx.lock();
             cout << "<Server> Listen socket [" << listen_socket << "] at port [" << (port) << "]\n";
             cout << "Sleeping " << sleep_time << " sec and stop...\n";
@@ -163,15 +175,13 @@ int main() {
             cout_mtx.unlock();
         });
 
-        for (int k = 0; k < 2; ++k) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(900));
-            for (int i = 0; i < clients_count; ++i) {
+        for (int i = 0; i < clients_count; ++i) {
 
             std::unique_ptr<Task> connect_task = std::make_unique<Task>();
             connect_task->vars.Add((SocketID)VSOCK_INVALID_SOCKET);
-            connect_task->vars.Add(port);
+            connect_task->vars.Add(std::forward<int>(port));
             connect_task->vars.Add(std::ref(outgoing));
-            connect_task->vars.Add(i);
+            connect_task->vars.Add(std::forward<int>(i));
             connect_task->SetLoopJob([&](Task& task) {
                 SocketID& client_socket_id = task.vars.Get<SocketID>(0);
                 const int port = task.vars.Get<int>(1);
@@ -194,7 +204,6 @@ int main() {
             pool.AddAsyncTask(std::move(connect_task));
 
         }
-    }
 
         cout << "Done!" << endl;
     }

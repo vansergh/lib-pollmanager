@@ -18,9 +18,6 @@ namespace vsock {
     private:
         enum class TaskType : std::uint8_t { ASYNC, SYNC, LOOP };
     public:
-        Task(const Task&) = delete;
-        Task& operator=(const Task&) = delete;
-    public:
 
         Task() = default;
 

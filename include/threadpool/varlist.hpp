@@ -12,15 +12,9 @@ namespace vsock {
     class VarList {
     public:
 
-        VarList(const VarList&) = delete;
-
-        VarList& operator=(const VarList&) = delete;
-
-    public:
-
         VarList() = default;
-        VarList(VarList&& other);
-        VarList& operator=(VarList&& rhs);
+        VarList(VarList&&) = default;
+        VarList& operator=(VarList&&) = default;
 
         template<typename T>
         void Add(T&& var);
@@ -47,7 +41,6 @@ namespace vsock {
         std::size_t capacity_{ 0 };
 
         void Resize_(std::size_t new_capacity);
-        void Swap_(VarList& other) noexcept;
 
     };
 
@@ -58,13 +51,13 @@ namespace vsock {
     template<typename T>
     inline void VarList::Add(T&& var) {
         Resize_(size_ + 1);
-        (nodes_.get() + (size_++))->Put(std::move(var));
+        (nodes_.get() + (size_++))->Put(std::forward<T>(var));
     }
 
     template<typename T>
     inline T& VarList::Emplace(T&& var) {
         Resize_(size_ + 1);
-        return (nodes_.get() + (size_++))->Emplace(std::move(var));
+        return (nodes_.get() + (size_++))->Emplace(std::forward<T>(var));
     }
 
     template<typename T>
