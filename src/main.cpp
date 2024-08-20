@@ -8,6 +8,7 @@ using namespace vsock;
 
 
 static std::mutex cout_mtx;
+static std::mutex socket_mtx;
 
 void InitWinsock() {
     //----------------------
@@ -34,7 +35,7 @@ SocketID Connect(int port) {
     ConnectSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (ConnectSocket == VSOCK_INVALID_SOCKET) {
         #ifdef _WIN32
-        throw std::runtime_error(std::to_string(WSAGetLastError()));
+        //throw std::runtime_error(std::to_string(WSAGetLastError()));
         #endif        
         return VSOCK_INVALID_SOCKET;
     }
@@ -48,11 +49,12 @@ SocketID Connect(int port) {
 
     //----------------------
     // Connect to server.
+
     int iResult = connect(ConnectSocket, (sockaddr*)&clientService, sizeof(clientService));
     if (iResult == VSOCK_SOCKET_ERROR) {
         #ifdef _WIN32
-        throw std::runtime_error(std::to_string(WSAGetLastError()));
-        #endif                 
+        //throw std::runtime_error(std::to_string(WSAGetLastError()));
+        #endif
         return VSOCK_INVALID_SOCKET;
     }
     return ConnectSocket;
@@ -123,7 +125,7 @@ int main() {
     cout << "\n=========================================================================\n"s;
 
     {
-        ThreadPool pool;
+        ThreadPool pool(32);
         PollManager* poll = new PollManager(&pool);
         int port{ 8080 };
         int backlog{ 4096 };
@@ -144,7 +146,7 @@ int main() {
                 poll->ResetFlags(socket_id);
             });
 
-            int sleep_time = 10;
+            int sleep_time = 5;
             cout_mtx.lock();
             cout << "<Server> Listen socket [" << listen_socket << "] at port [" << (port) << "]\n";
             cout << "Sleeping " << sleep_time << " sec and stop...\n";
@@ -162,17 +164,36 @@ int main() {
         });
 
 
-        for (int i = 0; i < clients_count; ++i) {
-            SocketID client_socket_id = VSOCK_INVALID_SOCKET;
-            while (client_socket_id == VSOCK_INVALID_SOCKET) {
+        for (int i = 0; i < 500; ++i) {
+
+            std::unique_ptr<Task> connect_task = std::make_unique<Task>();
+            connect_task->vars.Add((SocketID)VSOCK_INVALID_SOCKET);
+            connect_task->vars.Add(port);
+            connect_task->vars.Add(std::ref(outgoing));
+            connect_task->vars.Add(i);
+            connect_task->SetLoopJob([](Task& task) {
+                SocketID& client_socket_id = task.vars.Get<SocketID>(0);
+                const int port = task.vars.Get<int>(1);
                 client_socket_id = Connect(port);
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            }
-            cout_mtx.lock();
-            ++outgoing;
-            cout << "<Client#" << i << "> Connected at port [" << std::to_string(port) << "], Socket ID: " << client_socket_id << std::endl;
-            cout_mtx.unlock();
+            }, std::ref(*connect_task));
+            connect_task->SetCondition([](Task& task, std::mutex& mtx) {
+                const SocketID client_socket_id = task.vars.Get<SocketID>(0);
+                if (client_socket_id == VSOCK_INVALID_SOCKET) {
+                    return true;
+                }
+                const int port = task.vars.Get<int>(1);
+                int& outgoing = task.vars.Get<std::reference_wrapper<int>>(2);
+                int index = task.vars.Get<int>(3);
+                mtx.lock();
+                ++outgoing;
+                cout << "<Client#" << index << "> Connected at port [" << std::to_string(port) << "], Socket ID: " << client_socket_id << std::endl;
+                mtx.unlock();
+                return false;
+            }, std::ref(*connect_task), std::ref(cout_mtx));
+            pool.AddAsyncTask(std::move(connect_task));
+
         }
+
         cout << "Done!" << endl;
     }
     ReleaseWinsock();

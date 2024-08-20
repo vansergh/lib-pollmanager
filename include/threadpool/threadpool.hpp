@@ -1,18 +1,13 @@
 #ifndef INCLUDE_GUARD_THREADPOOL_HPP
 #define INCLUDE_GUARD_THREADPOOL_HPP
 
-#include <cstdint>
-#include <cstddef> 
 #include <thread>
-#include <exception> 
-#include <utility>
 #include <mutex>
-#include <memory>
 #include <deque>
-#include <future>
-#include <functional>
-#include <type_traits>
 #include <condition_variable>
+
+#include <threadpool/task.hpp>
+#include <threadpool/queue.hpp>
 
 namespace vsock {
 
@@ -37,54 +32,54 @@ namespace vsock {
 
         ThreadPool();
         ThreadPool(const DestroyType destroy_type);
-        ThreadPool(const std::uint32_t concurency);
-        ThreadPool(const std::uint32_t concurency, const DestroyType destroy_type);
+        ThreadPool(const std::size_t concurency);
+        ThreadPool(const std::size_t concurency, const DestroyType destroy_type);
         ~ThreadPool();
 
-        void Wait();
-        void Pause();
-        void Continue();
-        void ClearTasks();
+        void Wait() noexcept;
+        void Pause() noexcept;
+        void Continue() noexcept;
+        void ClearTasks() noexcept;
+
         void Reset();
         void Reset(const DestroyType destroy_type);
-        void Reset(const std::uint32_t concurency);
-        void Reset(const std::uint32_t concurency, const DestroyType destroy_type);
+        void Reset(const std::size_t concurency);
+        void Reset(const std::size_t concurency, const DestroyType destroy_type);
 
-        template <typename FuncType>
-        void AddAsyncTask(FuncType&& task);
+        void AddSyncTask(std::unique_ptr<Task> task);
+        void AddAsyncTask(std::unique_ptr<Task> task);
 
-        template <typename FuncType, typename RetType = std::invoke_result_t<std::decay_t<FuncType>>>
-        [[nodiscard]] std::future<RetType> AddSyncTask(FuncType&& task);
+        template<typename F, typename...Args>
+        auto AddSyncTask(F&& job, Args&&... args) -> std::future<std::invoke_result_t<F, Args...>>;
 
-
-        template <class FuncType, class... Args>
-        auto AddTask(FuncType&& task_func, Args&&... args) -> std::future<decltype(task_func(args...))>;
+        template<typename F, typename...Args>
+        void AddAsyncTask(F&& job, Args&&... args);
 
     private:
 
         DestroyType destroy_type_;
 
         std::unique_ptr<std::thread[]> threads_;
-        std::deque<std::function<void()>> tasks_;
+        TaskQueue tasks_;
 
-        std::uint32_t threads_count_;
-        std::uint64_t tasks_running_;
+        std::size_t threads_count_;
+        std::size_t tasks_running_;
 
         bool working_;
         bool paused_;
         bool waiting_;
 
-        mutable std::mutex tasks_mutex_;
+        std::mutex tasks_mutex_;
 
         std::condition_variable tasks_available_cv_;
         std::condition_variable tasks_done_cv_;
 
-        [[nodiscard]] std::uint32_t ChooseThreadsCount_(const std::uint32_t threads_count) const noexcept;
+        [[nodiscard]] std::size_t ChooseThreadsCount_(const std::size_t threads_count) const noexcept;
         void CreateThreads_();
         void StopThreads_();
         void DestroyThreads_();
         void Finish_();
-        void Process_(const std::uint32_t thread_index);
+        void Process_();
 
     };
 
@@ -92,67 +87,21 @@ namespace vsock {
     // ThreadPool class defenition (template methods)
     ////////////////////////////////////////////////////////////////////////////////
 
-    template<typename FuncType>
-    inline void ThreadPool::AddAsyncTask(FuncType&& task) {
-        {
-            const std::scoped_lock tasks_lock(tasks_mutex_);
-            tasks_.emplace_back(std::forward<FuncType>(task));
-        }
+    template<typename F, typename...Args>
+    auto ThreadPool::AddSyncTask(F&& job, Args&&... args) -> std::future<std::invoke_result_t<F, Args...>> {
+        std::unique_ptr<Task> task_ptr(std::make_unique<Task>());
+        auto result = task_ptr->SetSyncJob(std::forward<F>(job), std::forward<Args>(args)...);
+        tasks_.PushBack(std::move(task_ptr));
         tasks_available_cv_.notify_one();
+        return result;
     }
 
-    template<typename FuncType, typename RetType>
-    inline std::future<RetType> ThreadPool::AddSyncTask(FuncType&& task) {
-        const std::shared_ptr<std::promise<RetType>> task_promise = std::make_shared<std::promise<RetType>>();
-        AddAsyncTask(
-            [task = std::forward<FuncType>(task), task_promise] {
-            try {
-                if constexpr (std::is_void_v<RetType>) {
-                    task();
-                    task_promise->set_value();
-                }
-                else {
-                    task_promise->set_value(task());
-                }
-            }
-            catch (...) {
-                try {
-                    task_promise->set_exception(std::current_exception());
-                }
-                catch (...) {
-                }
-            }
-        });
-        return task_promise->get_future();
-    }
-
-    template<class FuncType, class ...Args>
-    inline auto ThreadPool::AddTask(FuncType&& task_func, Args && ...args) -> std::future<decltype(task_func(args ...))> {
-
-        {
-            const std::scoped_lock tasks_lock(tasks_mutex_);
-            if (!working_)
-                throw std::runtime_error(
-                    "Delegating task to a threadpool "
-                    "that has been terminated or canceled.");
-        }
-
-        using return_t = decltype(task_func(args...));
-        using future_t = std::future<return_t>;
-        using task_t = std::packaged_task<return_t()>;
-
-        auto bind_func = std::bind(std::forward<FuncType>(task_func), std::forward<Args>(args)...);
-        std::shared_ptr<task_t> task = std::make_shared<task_t>(std::move(bind_func));
-        future_t res = task->get_future();
-        {
-            const std::scoped_lock tasks_lock(tasks_mutex_);
-            tasks_.emplace_back([task]() -> void {
-                (*task)();
-            });
-        }
-
+    template<typename F, typename...Args>
+    void ThreadPool::AddAsyncTask(F&& job, Args&&... args) {
+        std::unique_ptr<Task> task_ptr(std::make_unique<Task>());
+        task_ptr->SetAsyncJob(std::forward<F>(job), std::forward<Args>(args)...);
+        tasks_.PushBack(std::move(task_ptr));
         tasks_available_cv_.notify_one();
-        return res;
     }
 
 }
